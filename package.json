@@ -1,0 +1,22 @@
+{
+  "name": "factory-worker",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy": "vercel --prod"
+  },
+  "devDependencies": {
+    "vite": "^4.2.0"
+  },
+  "dependencies": {
+    "alertifyjs": "^1.13.1",
+    "dat.gui": "^0.7.9",
+    "notyf": "^3.10.0",
+    "three": "^0.151.3",
+    "vercel": "^31.0.1"
+  }
+}
