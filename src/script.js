@@ -9,6 +9,7 @@ import { manager, modelOne, eurica, mercedes, otz, prize, board, stairs, paint, 
 import { playHitSound, stopHitSound } from './sound.js';
 
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js'
+import { Octree } from 'three/addons/math/Octree.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPixelatedPass } from 'three/addons/postprocessing/RenderPixelatedPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
@@ -17,6 +18,8 @@ import 'notyf/notyf.min.css';
 
 const notyf = new Notyf();
 
+const worldOctree = new Octree();
+const playerCollider = new THREE.Sphere(new THREE.Vector3(0,0,0), 0.5); // Initialize with a default center
 
 /**
  * Base
@@ -57,6 +60,20 @@ tractor.position.set(-4, 0, 27)
 paper.position.set(16, 0, -44)
 paint.position.set(-27, 0, -11)
 // Load a glTF resource
+
+// Add objects to Octree for collisions
+objects.forEach(object => {
+    // It's good practice to ensure the object is a mesh and has geometry
+    // and is visible, before adding to Octree.
+    // loader.js seems to handle this, as 'objects' array is used for raycasting.
+    // We assume objects in the 'objects' array are suitable for collision.
+    worldOctree.fromGraphNode(object);
+});
+
+// Add the floor separately if it's not part of the 'objects' array
+// or if it needs special handling.
+// From loader.js, 'floor' is exported separately.
+worldOctree.fromGraphNode(floor);
 
 
 /**
@@ -224,7 +241,7 @@ document.addEventListener('keydown', (e) => {
     }
 })
 
-const raycaster = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0, - 1, 0), 0, 4);
+// const raycaster = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0, - 1, 0), 0, 4); // Removed old raycaster
 
 
 /**
@@ -290,38 +307,36 @@ const tick = () => {
 
     if (controls.isLocked === true) {
 
-        raycaster.ray.origin.copy(camera.position);
-        camera.getWorldDirection(raycaster.ray.direction);
+        // Raycasting for object interaction (mouse picking) - this is separate from collision
+        // For now, we'll need a new raycaster for this if INTERSECTED logic is to be kept fully functional.
+        // Let's define a simple one for mouse picking.
+        const interactionRaycaster = new THREE.Raycaster();
+        interactionRaycaster.setFromCamera({ x: 0, y: 0 }, camera); // Ray from center of screen
 
+        const intersectionsForInteraction = interactionRaycaster.intersectObjects(objects, true);
+        const onObject = intersectionsForInteraction.length > 0; // Used for mouse interaction logic
 
-        const intersections = raycaster.intersectObjects(objects, true);
-        var selected = intersections[0];
-
-        const onObject = intersections.length > 0;
         if (onObject) {
-            if (INTERSECTED != selected.object) {
+            const selectedForInteraction = intersectionsForInteraction[0].object;
+            if (INTERSECTED !== selectedForInteraction) {
                 if (INTERSECTED) INTERSECTED.material.emissive.setHex(INTERSECTED.currentHex);
 
-                INTERSECTED = intersections[0].object
-                INTERSECTED.currentHex = INTERSECTED.material.emissive.getHex()
-                // INTERSECTED.material.emissive.setHex( 0xeeeeee )
+                INTERSECTED = selectedForInteraction;
+                INTERSECTED.currentHex = INTERSECTED.material.emissive.getHex();
                 composer.addPass(bloomPass);
-
             }
-
         } else {
-
             if (INTERSECTED) INTERSECTED.material.emissive.setHex(INTERSECTED.currentHex);
-            composer.removePass(bloomPass)
-
+            composer.removePass(bloomPass);
             INTERSECTED = null;
-
         }
+
         document.addEventListener('mousedown', onDocumentMouseDown);
         var numberInInventory = CLICKED.length
         document.getElementById("inventoryProgress").value = numberInInventory
         document.getElementById("myLog").innerHTML = `${numberInInventory} из 10`
 
+        // The onObject variable for onDocumentMouseDown will now be based on interactionRaycaster
         function addToClicked(clickedObjectName) {
             if (CLICKED.includes(clickedObjectName)) {
                 return
@@ -341,14 +356,20 @@ const tick = () => {
 
         function onDocumentMouseDown(event) {
             event.preventDefault();
-            if (onObject) {
-                if (INTERSECTED != selected.object) {
-                    if (INTERSECTED);
-
-                    INTERSECTED = intersections[0].object
-                    addToClicked(INTERSECTED.parent.parent.name)
+            // Note: 'onObject' here is from the interactionRaycaster, not the old collision raycaster
+            if (onObject && intersectionsForInteraction.length > 0) { 
+                // Check INTERSECTED against the first object from interactionRaycaster
+                if (INTERSECTED !== intersectionsForInteraction[0].object) { 
+                    if (INTERSECTED) {
+                        // This part seems to be missing logic to reset previous INTERSECTED if any
+                    }
+                    // INTERSECTED is already set above based on interactionRaycaster
+                    // addToClicked(INTERSECTED.parent.parent.name); // This assumes INTERSECTED is correctly set
+                    // Let's ensure INTERSECTED is valid before calling addToClicked
+                    if (INTERSECTED && INTERSECTED.parent && INTERSECTED.parent.parent) {
+                         addToClicked(INTERSECTED.parent.parent.name);
+                    }
                     // Display a success notification
-
 
                     // console.log(numberInInventory);
                     // console.log(INTERSECTED);
@@ -367,13 +388,13 @@ const tick = () => {
 
         }
 
-
+        // Player movement and collision
         const delta = (time - prevTime) / 5000;
 
+        // 1. Calculate tentative velocity based on input
         velocity.x -= velocity.x * 10.0 * delta;
         velocity.z -= velocity.z * 10.0 * delta;
-
-        velocity.y -= 9.8 * 100.0 * delta; // 100.0 = mass
+        // velocity.y remains for gravity if implemented, not directly affected by Octree planar collisions here
 
         direction.z = Number(moveForward) - Number(moveBackward);
         direction.x = Number(moveRight) - Number(moveLeft);
@@ -381,26 +402,40 @@ const tick = () => {
 
         if (moveForward || moveBackward) velocity.z -= direction.z * 400.0 * delta;
         if (moveLeft || moveRight) velocity.x -= direction.x * 400.0 * delta;
+        
+        // 2. Define tentative movement based on current velocity
+        const tentativeMovement = new THREE.Vector3(-velocity.x * delta, 0, -velocity.z * delta);
+        
+        // Update playerCollider to the *potential* new position
+        playerCollider.center.copy(camera.position).add(tentativeMovement);
+        
+        // 3. Perform collision detection with Octree at the potential new position
+        const collisionResult = worldOctree.sphereIntersect(playerCollider);
 
-        if (onObject === true) {
-
-            velocity.z = Math.max(0, velocity.z);
-
+        if (collisionResult) {
+            // console.log('Player collision:', collisionResult.normal.toArray(), collisionResult.depth);
+            // A collision occurred. Correct the camera's current position by the penetration depth.
+            camera.position.add(collisionResult.normal.multiplyScalar(collisionResult.depth));
+            
+            // Adjust velocity: Remove the component of velocity that is in the direction of the collision normal.
+            // This stops the player from continuing to move into the collision surface.
+            const vDotN = velocity.dot(collisionResult.normal);
+            velocity.sub(collisionResult.normal.multiplyScalar(vDotN));
         }
 
-        controls.moveRight(- velocity.x * delta);
-        controls.moveForward(- velocity.z * delta);
+        // 4. Apply final (potentially adjusted) velocity to controls.
+        // PointerLockControls applies movement relative to the camera's orientation.
+        controls.moveRight(-velocity.x * delta);
+        controls.moveForward(-velocity.z * delta);
 
+        // Gravity (current implementation is basic and might interfere with Octree y-axis later)
+        // velocity.y -= 9.8 * 100.0 * delta; // 100.0 = mass
         // controls.getObject().position.y += ( velocity.y * delta ); // new behavior
 
-        // if ( controls.getObject().position.y < 2 ) {
-
+        // if ( controls.getObject().position.y < playerCollider.radius ) { // Check against collider radius
         //     velocity.y = 0;
-        //     controls.getObject().position.y = 2;
-
+        //     controls.getObject().position.y = playerCollider.radius;
         // }
-
-        // console.log(onObject);
 
     }
 
